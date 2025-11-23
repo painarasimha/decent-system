@@ -1,122 +1,161 @@
 const hre = require("hardhat");
+const fs = require("fs");
+const path = require("path");
 
 async function main() {
-  console.log("🏥 Starting Local Health Records Test...\n");
+  console.log("🚀 Starting deployment...\n");
 
-  // Get signers (test accounts)
-  const [deployer, doctor, patient] = await hre.ethers.getSigners();
-  
-  console.log("👤 Test Accounts:");
-  console.log("   Deployer:", deployer.address);
-  console.log("   Doctor:", doctor.address);
-  console.log("   Patient:", patient.address);
-  console.log("");
+  // Get deployer account
+  const [deployer] = await hre.ethers.getSigners();
+  console.log("📍 Deploying contracts with account:", deployer.address);
+  console.log("💰 Account balance:", (await hre.ethers.provider.getBalance(deployer.address)).toString(), "\n");
 
-  // Deploy the contract
-  console.log("📦 Deploying HealthRecords contract...");
-  const HealthRecords = await hre.ethers.getContractFactory("HealthRecords");
-  const healthRecords = await HealthRecords.deploy();
-  await healthRecords.waitForDeployment();
-  
-  const contractAddress = await healthRecords.getAddress();
-  console.log("✅ Contract deployed to:", contractAddress);
-  console.log("");
+  // ============================================
+  // STEP 1: Deploy PatientRegistry
+  // ============================================
+  console.log("📋 Deploying PatientRegistry...");
+  const PatientRegistry = await hre.ethers.getContractFactory("PatientRegistry");
+  const patientRegistry = await PatientRegistry.deploy();
+  await patientRegistry.waitForDeployment();
+  const patientRegistryAddress = await patientRegistry.getAddress();
+  console.log("✅ PatientRegistry deployed to:", patientRegistryAddress, "\n");
 
-  // Check initial record count
-  let recordCount = await healthRecords.recordCount();
-  console.log("📊 Initial record count:", recordCount.toString());
-  console.log("");
+  // ============================================
+  // STEP 2: Deploy DoctorRegistry
+  // ============================================
+  console.log("📋 Deploying DoctorRegistry...");
+  const DoctorRegistry = await hre.ethers.getContractFactory("DoctorRegistry");
+  const doctorRegistry = await DoctorRegistry.deploy();
+  await doctorRegistry.waitForDeployment();
+  const doctorRegistryAddress = await doctorRegistry.getAddress();
+  console.log("✅ DoctorRegistry deployed to:", doctorRegistryAddress, "\n");
 
-  // Add first health record
-  console.log("➕ Adding first health record...");
-  const tx1 = await healthRecords.connect(doctor).addRecord(
-    patient.address,
-    "John Doe",
-    "QmXxxx1234abcd", // Simulated IPFS hash
-    "lab_report"
+  // ============================================
+  // STEP 3: Deploy RecordRegistry
+  // ============================================
+  console.log("📋 Deploying RecordRegistry...");
+  const RecordRegistry = await hre.ethers.getContractFactory("RecordRegistry");
+  const recordRegistry = await RecordRegistry.deploy(
+    patientRegistryAddress,
+    doctorRegistryAddress
   );
-  await tx1.wait();
-  console.log("✅ Record 1 added!");
-  console.log("   Transaction hash:", tx1.hash);
-  console.log("");
+  await recordRegistry.waitForDeployment();
+  const recordRegistryAddress = await recordRegistry.getAddress();
+  console.log("✅ RecordRegistry deployed to:", recordRegistryAddress, "\n");
 
-  // Add second health record
-  console.log("➕ Adding second health record...");
-  const tx2 = await healthRecords.connect(doctor).addRecord(
-    patient.address,
-    "John Doe",
-    "QmYyyy5678efgh", // Simulated IPFS hash
-    "prescription"
+  // ============================================
+  // STEP 4: Deploy AccessControl
+  // ============================================
+  console.log("📋 Deploying AccessControl...");
+  const AccessControl = await hre.ethers.getContractFactory("AccessControl");
+  const accessControl = await AccessControl.deploy(
+    recordRegistryAddress,
+    doctorRegistryAddress
   );
-  await tx2.wait();
-  console.log("✅ Record 2 added!");
-  console.log("   Transaction hash:", tx2.hash);
-  console.log("");
+  await accessControl.waitForDeployment();
+  const accessControlAddress = await accessControl.getAddress();
+  console.log("✅ AccessControl deployed to:", accessControlAddress, "\n");
 
-  // Check updated record count
-  recordCount = await healthRecords.recordCount();
-  console.log("📊 Total records now:", recordCount.toString());
-  console.log("");
+  // ============================================
+  // STEP 5: Deploy AuditLog
+  // ============================================
+  console.log("📋 Deploying AuditLog...");
+  const AuditLog = await hre.ethers.getContractFactory("AuditLog");
+  const auditLog = await AuditLog.deploy();
+  await auditLog.waitForDeployment();
+  const auditLogAddress = await auditLog.getAddress();
+  console.log("✅ AuditLog deployed to:", auditLogAddress, "\n");
 
-  // Get patient's record IDs
-  console.log("🔍 Fetching patient's records...");
-  const patientRecordIds = await healthRecords.getPatientRecords(patient.address);
-  console.log("   Patient has", patientRecordIds.length, "records");
-  console.log("   Record IDs:", patientRecordIds.map(id => id.toString()).join(", "));
-  console.log("");
+  // ============================================
+  // STEP 6: Save Deployment Info
+  // ============================================
+  const deploymentInfo = {
+    network: hre.network.name,
+    deployer: deployer.address,
+    deployedAt: new Date().toISOString(),
+    contracts: {
+      PatientRegistry: patientRegistryAddress,
+      DoctorRegistry: doctorRegistryAddress,
+      RecordRegistry: recordRegistryAddress,
+      AccessControl: accessControlAddress,
+      AuditLog: auditLogAddress
+    },
+    gasUsed: {
+      PatientRegistry: "~500,000",
+      DoctorRegistry: "~700,000",
+      RecordRegistry: "~1,200,000",
+      AccessControl: "~1,500,000",
+      AuditLog: "~400,000"
+    }
+  };
 
-  // Get details of first record
-  console.log("📄 Details of Record #1:");
-  const record1 = await healthRecords.getRecord(1);
-  console.log("   ID:", record1[0].toString());
-  console.log("   Patient Address:", record1[1]);
-  console.log("   Patient Name:", record1[2]);
-  console.log("   Record Hash:", record1[3]);
-  console.log("   Record Type:", record1[4]);
-  console.log("   Timestamp:", new Date(Number(record1[5]) * 1000).toLocaleString());
-  console.log("   Uploaded By:", record1[6]);
-  console.log("   Is Active:", record1[7]);
-  console.log("");
+  // Save to blockchain folder
+  const deploymentsPath = path.join(__dirname, "../deployments.json");
+  fs.writeFileSync(deploymentsPath, JSON.stringify(deploymentInfo, null, 2));
+  console.log("✅ Deployment info saved to:", deploymentsPath, "\n");
 
-  // Get details of second record
-  console.log("📄 Details of Record #2:");
-  const record2 = await healthRecords.getRecord(2);
-  console.log("   ID:", record2[0].toString());
-  console.log("   Patient Address:", record2[1]);
-  console.log("   Patient Name:", record2[2]);
-  console.log("   Record Hash:", record2[3]);
-  console.log("   Record Type:", record2[4]);
-  console.log("   Timestamp:", new Date(Number(record2[5]) * 1000).toLocaleString());
-  console.log("   Uploaded By:", record2[6]);
-  console.log("   Is Active:", record2[7]);
-  console.log("");
+  // ============================================
+  // STEP 7: Copy ABIs and Deployment Info to Frontend
+  // ============================================
+  const fullStackContractsPath = path.join(__dirname, "../../frontend/lib/contracts");
 
-  // Test revoke functionality
-  console.log("❌ Revoking Record #1...");
-  const tx3 = await healthRecords.revokeRecord(1);
-  await tx3.wait();
-  console.log("✅ Record 1 revoked!");
-  console.log("");
+  // Create directory if it doesn't exist
+  if (!fs.existsSync(fullStackContractsPath)) {
+    fs.mkdirSync(fullStackContractsPath, { recursive: true });
+  }
 
-  // Check revoked record status
-  console.log("📄 Checking Record #1 after revocation:");
-  const revokedRecord = await healthRecords.getRecord(1);
-  console.log("   Is Active:", revokedRecord[7]); // Should be false
-  console.log("");
+  // Copy each contract's ABI
+  const contracts = [
+    "PatientRegistry",
+    "DoctorRegistry",
+    "RecordRegistry",
+    "AccessControl",
+    "AuditLog"
+  ];
 
-  console.log("🎉 Local testing complete!");
-  console.log("");
-  console.log("📋 Summary:");
-  console.log("   ✅ Contract deployed successfully");
-  console.log("   ✅ Added 2 health records");
-  console.log("   ✅ Retrieved patient records");
-  console.log("   ✅ Revoked a record");
-  console.log("   ✅ All functions working correctly!");
+  contracts.forEach(contractName => {
+    const artifactPath = path.join(
+      __dirname,
+      `../artifacts/contracts/${contractName}.sol/${contractName}.json`
+    );
+    const targetPath = path.join(fullStackContractsPath, `${contractName}.json`);
+
+    if (fs.existsSync(artifactPath)) {
+      fs.copyFileSync(artifactPath, targetPath);
+      console.log(`✅ Copied ${contractName}.json to frontend`);
+    } else {
+      console.warn(`⚠️  Warning: ${contractName} artifact not found`);
+    }
+  });
+
+  // Copy deployments info
+  const targetDeploymentsPath = path.join(fullStackContractsPath, "deployments.json");
+  fs.copyFileSync(deploymentsPath, targetDeploymentsPath);
+  console.log("✅ Copied deployments.json to frontend\n");
+
+  // ============================================
+  // STEP 8: Summary
+  // ============================================
+  console.log("═══════════════════════════════════════════════════");
+  console.log("🎉 DEPLOYMENT COMPLETE!");
+  console.log("═══════════════════════════════════════════════════");
+  console.log("\n📦 Contract Addresses:");
+  console.log("   PatientRegistry  :", patientRegistryAddress);
+  console.log("   DoctorRegistry   :", doctorRegistryAddress);
+  console.log("   RecordRegistry   :", recordRegistryAddress);
+  console.log("   AccessControl    :", accessControlAddress);
+  console.log("   AuditLog         :", auditLogAddress);
+  console.log("\n📁 Files Updated:");
+  console.log("   ✅ blockchain/deployments.json");
+  console.log("   ✅ frontend/lib/contracts/*.json");
+  console.log("\n🔗 Network:", hre.network.name);
+  console.log("⏰ Timestamp:", new Date().toISOString());
+  console.log("═══════════════════════════════════════════════════\n");
 }
 
 main()
   .then(() => process.exit(0))
   .catch((error) => {
-    console.error(error);
+    console.error("❌ Deployment failed:", error);
     process.exit(1);
   });

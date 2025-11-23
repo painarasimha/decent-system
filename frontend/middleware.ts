@@ -1,51 +1,21 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { verifyToken, getTokenFromHeader } from '@/lib/jwt';
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 
-/**
- * Middleware to protect routes starting with /api/protected
- * Verifies JWT token before allowing access
- */
 export function middleware(request: NextRequest) {
-  // Only protect /api/protected/* routes
-  if (request.nextUrl.pathname.startsWith('/api/protected')) {
-    const authHeader = request.headers.get('authorization');
-    const token = getTokenFromHeader(authHeader);
-    
-    if (!token) {
-      console.warn('[MIDDLEWARE] Blocked request - No token provided');
-      return NextResponse.json(
-        { 
-          error: 'Unauthorized - Authentication required',
-          message: 'Please provide a valid JWT token in the Authorization header'
-        },
-        { status: 401 }
-      );
-    }
+  // Public paths that don't require authentication
+  const publicPaths = ['/', '/login'];
+  const path = request.nextUrl.pathname;
 
-    try {
-      // Verify JWT token
-      const decoded = verifyToken(token);
-      console.log(`[MIDDLEWARE] Request authorized for ${decoded.walletAddress}`);
-      
-      // Token is valid, allow request to continue
-      return NextResponse.next();
-    } catch (error: any) {
-      console.warn(`[MIDDLEWARE] Blocked request - ${error.message}`);
-      return NextResponse.json(
-        { 
-          error: 'Unauthorized - Invalid or expired token',
-          message: error.message
-        },
-        { status: 401 }
-      );
-    }
+  // Check if current path is public
+  if (publicPaths.includes(path)) {
+    return NextResponse.next();
   }
 
-  // Allow all other routes
+  // For protected routes, we'll check auth on client side
+  // since we're using localStorage for token storage
   return NextResponse.next();
 }
 
-// Configure which routes the middleware should run on
 export const config = {
-  matcher: '/api/protected/:path*'
+  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
 };

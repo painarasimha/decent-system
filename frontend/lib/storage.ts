@@ -1,51 +1,49 @@
-import { NonceData } from '../types/auth';
+// Client-side storage utilities
+export const storage = {
+  getToken: () => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('auth_token');
+    }
+    return null;
+  },
 
-/**
- * In-memory storage for nonces and user roles
- * Replace with database in production (PostgreSQL, MongoDB, etc.)
- */
-export class Storage {
-  private static userNonces = new Map<string, NonceData>();
-  private static userRoles = new Map<string, 'doctor' | 'patient'>();
+  setToken: (token: string) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('auth_token', token);
+    }
+  },
 
-  // Nonce management
-  static setNonce(address: string, data: NonceData): void {
-    this.userNonces.set(address.toLowerCase(), data);
-  }
+  removeToken: () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('wallet_address');
+      localStorage.removeItem('user_role');
+    }
+  },
 
-  static getNonce(address: string): NonceData | undefined {
-    return this.userNonces.get(address.toLowerCase());
-  }
+  getAddress: () => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('wallet_address');
+    }
+    return null;
+  },
 
-  static deleteNonce(address: string): void {
-    this.userNonces.delete(address.toLowerCase());
-  }
+  setAddress: (address: string) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('wallet_address', address);
+    }
+  },
 
-  // Role management
-  static setRole(address: string, role: 'doctor' | 'patient'): void {
-    this.userRoles.set(address.toLowerCase(), role);
-  }
+  getRole: () => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('user_role') as 'patient' | 'doctor' | null;
+    }
+    return null;
+  },
 
-  static getRole(address: string): 'doctor' | 'patient' {
-    return this.userRoles.get(address.toLowerCase()) || 'patient';
-  }
-
-  // Cleanup expired nonces (call periodically)
-  static cleanupExpiredNonces(): void {
-    const now = Date.now();
-    const FIVE_MINUTES = 5 * 60 * 1000;
-    
-    for (const [address, data] of this.userNonces.entries()) {
-      if (now - data.timestamp > FIVE_MINUTES) {
-        this.userNonces.delete(address);
-      }
+  setRole: (role: 'patient' | 'doctor') => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('user_role', role);
     }
   }
-}
-
-// Cleanup expired nonces every minute
-if (typeof setInterval !== 'undefined') {
-  setInterval(() => {
-    Storage.cleanupExpiredNonces();
-  }, 60 * 1000);
-}
+};

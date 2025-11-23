@@ -1,73 +1,84 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ProtectedResponse, Patient, HealthRecord } from '@/types/auth';
-import { verifyToken, getTokenFromHeader } from '@/lib/jwt';
+import { verifyToken } from '@/lib/jwt';
+import { blockchainAPI } from '@/lib/blockchain-api';
 
-/**
- * GET /api/protected/health-records
- * Retrieve role-specific health data (protected route)
- */
 export async function GET(request: NextRequest) {
   try {
-    // Extract and verify JWT token
     const authHeader = request.headers.get('authorization');
-    const token = getTokenFromHeader(authHeader);
-    
-    if (!token) {
-      return NextResponse.json(
-        { error: 'Unauthorized - No token provided' }, 
-        { status: 401 }
-      );
+    if (!authHeader?.startsWith('Bearer ')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Verify JWT token
-    let decoded;
-    try {
-      decoded = verifyToken(token);
-    } catch (error: any) {
-      return NextResponse.json(
-        { error: `Unauthorized - ${error.message}` }, 
-        { status: 401 }
-      );
+    const token = authHeader.substring(7);
+    const payload = await verifyToken(token);
+
+    if (!payload) {
+      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
-    const { walletAddress, role } = decoded;
+    // Get patient address from query params (for doctors) or use own address (for patients)
+    const { searchParams } = new URL(request.url);
+    const patientAddress = searchParams.get('patientAddress') || payload.address;
 
-    // Mock data - replace with real database queries in production
-    const doctorData = {
-      message: 'Welcome, Dr. ' + walletAddress.substring(0, 8) + '! Here are your assigned patients.',
-      patients: [
-        { id: 1, name: 'John Doe', status: 'stable' },
-        { id: 2, name: 'Jane Smith', status: 'critical' },
-        { id: 3, name: 'Bob Johnson', status: 'recovering' },
-        { id: 4, name: 'Alice Williams', status: 'stable' }
-      ] as Patient[]
-    };
+    // Get records from blockchain
+    const records = await blockchainAPI.getPatientRecords(patientAddress);
 
-    const patientData = {
-      message: 'Welcome! Here are your personal health records.',
-      records: [
-        { id: 1, type: 'Blood Test', date: '2025-11-10', status: 'Normal - All values within range' },
-        { id: 2, type: 'X-Ray Chest', date: '2025-11-12', status: 'Pending Doctor Review' },
-        { id: 3, type: 'MRI Scan', date: '2025-11-14', status: 'Completed - No abnormalities detected' },
-        { id: 4, type: 'ECG', date: '2025-11-13', status: 'Normal Sinus Rhythm' }
-      ] as HealthRecord[]
-    };
-
-    // Return role-specific data
-    const responseData: ProtectedResponse = {
-      success: true,
-      role,
-      walletAddress,
-      data: role === 'doctor' ? doctorData : patientData
-    };
-
-    console.log(`[PROTECTED] Health records accessed by ${role}: ${walletAddress}`);
-
-    return NextResponse.json(responseData);
-  } catch (error) {
-    console.error('[PROTECTED] Health records error:', error);
+    return NextResponse.json({ 
+      records,
+      patientAddress 
+    });
+  } catch (error: any) {
+    console.error('Error fetching health records:', error);
     return NextResponse.json(
-      { error: 'Internal server error' }, 
+      { error: error.message || 'Failed to fetch health records' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const authHeader = request.headers.get('authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const token = authHeader.substring(7);
+    const payload = await verifyToken(token);
+
+    if (!payload) {
+      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    }
+
+    const { recordHash, patientAddress } = await request.json();
+
+    if (!recordHash) {
+      return NextResponse.json(
+        { error: 'Record hash required' },
+        { status: 400 }
+      );
+    }
+
+    // Determine target address
+    const targetAddress = payload.role === 'doctor' && patientAddress
+      ? patientAddress
+      : payload.address;
+
+    // Add record to blockchain
+    const txHash = await blockchainAPI.addHealthRecord(
+      targetAddress,
+      recordHash
+    );
+
+    return NextResponse.json({ 
+      success: true, 
+      transactionHash: txHash,
+      patientAddress: targetAddress
+    });
+  } catch (error: any) {
+    console.error('Error adding health record:', error);
+    return NextResponse.json(
+      { error: error.message || 'Failed to add health record' },
       { status: 500 }
     );
   }

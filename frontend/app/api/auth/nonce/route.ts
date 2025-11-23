@@ -1,52 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AuthRequest } from '@/types/auth';
-import { Storage } from '@/lib/storage';
+import { randomBytes } from 'crypto';
 
-/**
- * POST /api/auth/nonce
- * Generate a unique nonce for wallet authentication
- */
+// In production, use Redis or database
+const nonceStore = new Map<string, string>();
+
 export async function POST(request: NextRequest) {
   try {
-    const body: AuthRequest = await request.json();
-    const { walletAddress } = body;
+    const { address } = await request.json();
     
-    // Validate wallet address
-    if (!walletAddress || typeof walletAddress !== 'string') {
+    if (!address) {
       return NextResponse.json(
-        { error: 'Valid wallet address is required' }, 
+        { error: 'Wallet address required' },
         { status: 400 }
       );
     }
 
-    // Basic validation for Ethereum address format
-    if (!/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
-      return NextResponse.json(
-        { error: 'Invalid Ethereum address format' }, 
-        { status: 400 }
-      );
-    }
-
-    // Generate a unique nonce with timestamp and randomness
-    const nonce = `Sign this message to authenticate with Decentralized Health Records System.\n\nTimestamp: ${Date.now()}\nNonce: ${Math.random().toString(36).substring(2)}`;
+    // Generate random nonce
+    const nonce = randomBytes(32).toString('hex');
     
-    // Store nonce with timestamp (expires in 5 minutes)
-    Storage.setNonce(walletAddress, {
-      nonce,
-      timestamp: Date.now()
-    });
-
-    console.log(`[AUTH] Nonce generated for wallet: ${walletAddress}`);
-
-    return NextResponse.json({ 
-      nonce,
-      expiresIn: 300 // 5 minutes in seconds
-    });
+    // Store nonce with address (expires in 5 minutes)
+    nonceStore.set(address.toLowerCase(), nonce);
+    
+    // Auto-cleanup after 5 minutes
+    setTimeout(() => {
+      nonceStore.delete(address.toLowerCase());
+    }, 5 * 60 * 1000);
+    
+    return NextResponse.json({ nonce });
   } catch (error) {
-    console.error('[AUTH] Nonce generation error:', error);
+    console.error('Nonce generation error:', error);
     return NextResponse.json(
-      { error: 'Internal server error' }, 
+      { error: 'Failed to generate nonce' },
       { status: 500 }
     );
   }
 }
+
+export { nonceStore };

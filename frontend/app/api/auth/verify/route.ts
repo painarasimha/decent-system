@@ -1,103 +1,66 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ethers } from 'ethers';
-import { VerifyRequest, AuthResponse } from '@/types/auth';
-import { Storage } from '@/lib/storage';
+import { nonceStore } from '../nonce/route';
 import { generateToken } from '@/lib/jwt';
 
-/**
- * POST /api/auth/verify
- * Verify MetaMask signature and issue JWT token
- */
 export async function POST(request: NextRequest) {
   try {
-    const body: VerifyRequest = await request.json();
-    const { walletAddress, signature, nonce } = body;
-    
-    // Validate input
-    if (!walletAddress || !signature || !nonce) {
+    const { address, signature, role } = await request.json();
+
+    if (!address || !signature || !role) {
       return NextResponse.json(
-        { error: 'Missing required parameters: walletAddress, signature, nonce' }, 
+        { error: 'Address, signature, and role required' },
         { status: 400 }
       );
     }
 
-    const lowerAddress = walletAddress.toLowerCase();
-    
-    // Retrieve stored nonce
-    const storedData = Storage.getNonce(lowerAddress);
-    if (!storedData) {
+    if (!['patient', 'doctor'].includes(role)) {
       return NextResponse.json(
-        { error: 'No nonce found. Please request a new nonce.' }, 
+        { error: 'Invalid role. Must be patient or doctor' },
+        { status: 400 }
+      );
+    }
+
+    // Get stored nonce
+    const nonce = nonceStore.get(address.toLowerCase());
+    if (!nonce) {
+      return NextResponse.json(
+        { error: 'Nonce not found. Please request a new nonce.' },
         { status: 401 }
       );
     }
 
-    // Verify nonce matches
-    if (storedData.nonce !== nonce) {
+    // Verify signature
+    const message = `Sign this message to authenticate with AI Decentralized HRS.\n\nNonce: ${nonce}\nRole: ${role}`;
+    const recoveredAddress = ethers.verifyMessage(message, signature);
+
+    if (recoveredAddress.toLowerCase() !== address.toLowerCase()) {
       return NextResponse.json(
-        { error: 'Invalid nonce. Please request a new nonce.' }, 
+        { error: 'Invalid signature' },
         { status: 401 }
       );
     }
 
-    // Check if nonce is expired (5 minutes)
-    const FIVE_MINUTES = 5 * 60 * 1000;
-    if (Date.now() - storedData.timestamp > FIVE_MINUTES) {
-      Storage.deleteNonce(lowerAddress);
-      return NextResponse.json(
-        { error: 'Nonce expired. Please request a new nonce.' }, 
-        { status: 401 }
-      );
-    }
+    // Clear used nonce
+    nonceStore.delete(address.toLowerCase());
 
-    // Verify signature using ethers.js
-    let recoveredAddress: string;
-    try {
-      recoveredAddress = ethers.verifyMessage(nonce, signature);
-    } catch (error) {
-      console.error('[AUTH] Signature verification failed:', error);
-      return NextResponse.json(
-        { error: 'Invalid signature format' }, 
-        { status: 401 }
-      );
-    }
-    
-    // Compare recovered address with provided address
-    if (recoveredAddress.toLowerCase() !== lowerAddress) {
-      console.error(`[AUTH] Address mismatch. Expected: ${lowerAddress}, Got: ${recoveredAddress.toLowerCase()}`);
-      return NextResponse.json(
-        { error: 'Signature verification failed. Address mismatch.' }, 
-        { status: 401 }
-      );
-    }
-
-    // Authentication successful! Delete used nonce
-    Storage.deleteNonce(lowerAddress);
-
-    // Get or set default user role
-    const role = Storage.getRole(lowerAddress);
-    
-    // Generate JWT token
-    const token = generateToken({
-      walletAddress: lowerAddress,
-      role,
-      timestamp: Date.now()
+    // Generate JWT with role
+    const token = await generateToken({
+      address: address.toLowerCase(),
+      role: role as 'patient' | 'doctor',
     });
 
-    console.log(`[AUTH] User authenticated successfully: ${lowerAddress} as ${role}`);
-
-    const response: AuthResponse = {
-      success: true,
+    return NextResponse.json({
       token,
-      role,
-      walletAddress: lowerAddress
-    };
-
-    return NextResponse.json(response);
+      user: {
+        address: address.toLowerCase(),
+        role,
+      },
+    });
   } catch (error) {
-    console.error('[AUTH] Verification error:', error);
+    console.error('Verification error:', error);
     return NextResponse.json(
-      { error: 'Internal server error during verification' }, 
+      { error: 'Verification failed' },
       { status: 500 }
     );
   }
