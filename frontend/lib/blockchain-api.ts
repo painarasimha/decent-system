@@ -94,9 +94,9 @@ export const blockchainAPI = {
   },
 
   isPatient: async (address: string) => {
-    const contract = await getPatientRegistry(false);
-    return await contract.isPatient(address);
-  },
+  const contract = await getPatientRegistry(false);
+  return await contract.isPatient(address); // ✅ Must have await and return
+},
 
   getPatientProfile: async (address: string) => {
     const contract = await getPatientRegistry(false);
@@ -126,20 +126,20 @@ export const blockchainAPI = {
   },
 
   isVerifiedDoctor: async (address: string) => {
-    const contract = await getDoctorRegistry(false);
-    return await contract.isVerifiedDoctor(address);
-  },
+  const contract = await getDoctorRegistry(false);
+  return await contract.isVerifiedDoctor(address); // ✅ Must have await and return
+},
 
   getDoctorInfo: async (address: string) => {
-    const contract = await getDoctorRegistry(false);
-    const info = await contract.getDoctorInfo(address);
-    return {
-      profileCID: info[0],
-      status: Number(info[1]), // 0: Pending, 1: Verified, 2: Rejected, 3: Suspended
-      registeredAt: Number(info[2]),
-      verifiedAt: Number(info[3])
-    };
-  },
+  const contract = await getDoctorRegistry(false);
+  const info = await contract.getDoctorInfo(address);
+  return { // ✅ Must return object
+    profileCID: info[0],
+    status: Number(info[1]),
+    registeredAt: Number(info[2]),
+    verifiedAt: Number(info[3])
+  };
+},
 
   updateDoctorProfile: async (newProfileCID: string) => {
     const contract = await getDoctorRegistry(true);
