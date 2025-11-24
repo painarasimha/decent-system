@@ -8,10 +8,10 @@
 - [ ] 2 test accounts imported
 
 ## Patient Flow (5 minutes)
-- [ ] Connect wallet
-- [ ] Register as patient
-- [ ] Upload 1 PDF file
-- [ ] View record details
+- [1] Connect wallet
+- [1] Register as patient
+- [1] Upload 1 PDF file
+- [1] View record details
 - [ ] Download & decrypt file
 - [ ] File opens correctly
 
