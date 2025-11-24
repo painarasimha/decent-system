@@ -1,23 +1,88 @@
-# ⚡ Quick Testing Checklist
+# ⚡ Comprehensive Testing Checklist
 
-## Setup (5 minutes)
+## Setup & Environment
 - [ ] Hardhat node running
-- [ ] Contracts deployed
-- [ ] Frontend running at localhost:3000
-- [ ] MetaMask on Hardhat Local network
-- [ ] 2 test accounts imported
+- [ ] All smart contracts deployed (PatientRegistry, DoctorRegistry, RecordRegistry, AccessControl, AuditLog)
+- [ ] Frontend running at `localhost:3000`
+- [ ] MetaMask connected to correct network
+- [ ] At least 2 test accounts imported in MetaMask
 
-## Patient Flow (5 minutes)
-- [1] Connect wallet
-- [1] Register as patient
-- [1] Upload 1 PDF file
-- [1] View record details
-- [ ] Download & decrypt file
-- [ ] File opens correctly
+## Patient Features
+- [ ] Connect wallet and authenticate
+- [ ] Register as patient
+- [ ] Upload encrypted medical record (PDF, etc.)
+- [ ] View own records and details
+- [ ] Download and decrypt record
+- [ ] See and respond to access requests from doctors
+- [ ] Grant access to doctor (with duration)
+- [ ] Revoke access to doctor
+- [ ] View audit logs for own records
 
-## Doctor Flow (5 minutes)
+## Doctor Features
 - [ ] Register as doctor
-- [ ] Admin verify doctor (console)
+- [ ] Get verified by admin
+- [ ] Login and authenticate
+- [ ] Request access to patient record (with reason)
+- [ ] View granted records
+- [ ] Download and decrypt granted record
+- [ ] View audit logs for accessed records
+
+## Access Control & Sharing
+- [ ] Doctor requests access to record
+- [ ] Patient sees pending requests
+- [ ] Patient grants access (selects duration, confirms)
+- [ ] Smart contract updates access status
+- [ ] Doctor can view/download only during granted period
+- [ ] Patient can revoke access at any time
+
+## Security & Encryption
+- [ ] Files are encrypted client-side before upload
+- [ ] Encryption key is stored on IPFS, encrypted for recipient
+- [ ] Only authorized users can decrypt files
+- [ ] No plaintext health data leaves browser
+
+## Blockchain & IPFS Integration
+- [ ] All record metadata stored on-chain
+- [ ] All files and keys stored on IPFS
+- [ ] CIDs match between blockchain and IPFS
+- [ ] Audit logs are written for all actions
+
+## UI/UX
+- [ ] All modals, buttons, and flows match branding
+- [ ] Responsive and error-free navigation
+- [ ] Clear feedback for all actions (success, error, loading)
+
+## Rollback & Cleanup
+- [ ] Can reset contracts/state by restarting Hardhat
+- [ ] Can clear localStorage and MetaMask data
+- [ ] Can deactivate records and unpin IPFS files
+
+## Performance
+- [ ] All actions complete within reasonable time (<15s typical)
+- [ ] No UI freezes or excessive delays
+
+## Edge Cases
+- [ ] Duplicate registration attempts handled
+- [ ] Invalid file types rejected
+- [ ] Access expiration handled correctly
+- [ ] Unauthorized access attempts blocked
+
+## Critical Paths
+- [ ] End-to-end patient record upload, encryption, and storage
+- [ ] End-to-end doctor access request and grant flow
+- [ ] End-to-end record download and decryption
+
+# 🎯 Detailed Test Cases
+
+## How to Use This Document
+Each test case includes:
+- **Preconditions:** What must be true before starting
+- **Test Data:** Specific inputs to use
+- **Expected Results:** What should happen at each step
+- **Validation Points:** How to verify success
+- **Rollback Steps:** How to undo if needed
+
+---
 - [ ] Login as doctor
 - [ ] Request access to record
 - [ ] Patient grant access
