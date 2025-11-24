@@ -6,25 +6,41 @@ const PINATA_SECRET_API_KEY = process.env.PINATA_SECRET_API_KEY;
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify authentication
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const token = authHeader.substring(7);
-    const payload = await verifyToken(token);
-
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
-
-    // Get JSON data
+    // Parse request body
     const body = await request.json();
     const { json, metadata } = body;
 
     if (!json) {
-      return NextResponse.json({ error: 'No JSON data provided' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'No JSON data provided' },
+        { status: 400 }
+      );
+    }
+
+    // ✅ OPTIONAL AUTHENTICATION - Allow both authenticated and unauthenticated requests
+    let uploaderAddress = 'registration';
+    const authHeader = request.headers.get('authorization');
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.substring(7);
+        const payload = await verifyToken(token);
+        if (payload) {
+          uploaderAddress = payload.address;
+        }
+      } catch (err) {
+        // Token invalid, but we continue anyway (for registration)
+        console.log('Invalid token during upload, continuing as unauthenticated');
+      }
+    }
+
+    // Validate Pinata credentials
+    if (!PINATA_API_KEY || !PINATA_SECRET_API_KEY) {
+      console.error('Pinata credentials missing!');
+      return NextResponse.json(
+        { error: 'IPFS service not configured. Please check environment variables.' },
+        { status: 500 }
+      );
     }
 
     // Upload to Pinata
@@ -32,16 +48,16 @@ export async function POST(request: NextRequest) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'pinata_api_key': PINATA_API_KEY!,
-        'pinata_secret_api_key': PINATA_SECRET_API_KEY!,
+        'pinata_api_key': PINATA_API_KEY,
+        'pinata_secret_api_key': PINATA_SECRET_API_KEY,
       },
       body: JSON.stringify({
         pinataContent: json,
         pinataMetadata: metadata ? {
-          name: metadata.name || 'health-record-key',
+          name: metadata.name || 'health-record-data',
           keyvalues: {
             ...metadata,
-            uploadedBy: payload.address,
+            uploadedBy: uploaderAddress,
             uploadedAt: new Date().toISOString(),
           },
         } : undefined,
@@ -49,8 +65,17 @@ export async function POST(request: NextRequest) {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(`Pinata JSON upload failed: ${error.error || response.statusText}`);
+      const errorText = await response.text();
+      console.error('Pinata API error:', errorText);
+      
+      let error;
+      try {
+        error = JSON.parse(errorText);
+      } catch {
+        error = { error: errorText };
+      }
+      
+      throw new Error(`Pinata upload failed: ${error.error || response.statusText}`);
     }
 
     const data = await response.json();
