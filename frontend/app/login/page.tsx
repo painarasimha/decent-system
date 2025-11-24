@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { connectWallet, signMessage, switchToLocalNetwork } from '@/lib/web3';
 import { blockchainAPI } from '@/lib/blockchain-api';
@@ -14,14 +14,66 @@ export default function LoginPage() {
   const [walletAddress, setWalletAddress] = useState('');
   const [selectedRole, setSelectedRole] = useState<'patient' | 'doctor'>('patient');
   const [licenseNumber, setLicenseNumber] = useState('');
+  const [walletCheck, setWalletCheck] = useState<'checking' | 'ready' | 'error'>('checking');
   const router = useRouter();
 
+  // Check wallet availability on mount
   useEffect(() => {
-    // Check if already logged in
-    const token = storage.getToken();
-    if (token) {
-      router.push('/dashboard');
-    }
+    const checkWallet = () => {
+      if (typeof window === 'undefined') {
+        setWalletCheck('error');
+        setError('Not in browser environment');
+        return;
+      }
+
+      const ethereum = (window as any).ethereum;
+
+      if (!ethereum) {
+        setWalletCheck('error');
+        setError('MetaMask not installed. Please install MetaMask extension.');
+        return;
+      }
+
+      // Check for Brave Wallet interference
+      if (ethereum.isBraveWallet && !ethereum.providers) {
+        setWalletCheck('error');
+        setError(
+          'Brave Wallet is blocking MetaMask.\n\n' +
+          'To fix:\n' +
+          '1. Open brave://settings/web3\n' +
+          '2. Set wallet to "None (use extensions)"\n' +
+          '3. Restart Brave\n' +
+          '4. Refresh this page'
+        );
+        return;
+      }
+
+      // Check for MetaMask
+      let hasMetaMask = false;
+
+      if (ethereum.providers) {
+        hasMetaMask = ethereum.providers.some(
+          (p: any) => p.isMetaMask && !p.isBraveWallet
+        );
+      } else {
+        hasMetaMask = ethereum.isMetaMask && !ethereum.isBraveWallet;
+      }
+
+      if (!hasMetaMask) {
+        setWalletCheck('error');
+        setError(
+          'MetaMask not detected.\n\n' +
+          'Please install MetaMask or disable other wallets.'
+        );
+        return;
+      }
+
+      console.log('✅ MetaMask detected and ready');
+      setWalletCheck('ready');
+      setError('');
+    };
+
+    checkWallet();
   }, []);
 
   const handleWalletConnect = async () => {
@@ -29,52 +81,102 @@ export default function LoginPage() {
       setLoading(true);
       setError('');
 
-      await switchToLocalNetwork();
-      const { address } = await connectWallet();
+      console.log('=== WALLET CONNECTION START ===');
+
+      // Connect wallet (no network switch yet)
+      console.log('Connecting to MetaMask...');
+      const walletResult = await connectWallet();
+
+      const { address, chainId } = walletResult;
+      console.log('✅ Connected:', address, 'Chain:', chainId);
+
       setWalletAddress(address);
 
-      // Check if patient
-      const isPatient = await blockchainAPI.isPatient(address);
+      // Switch network if needed
+      if (chainId !== 31337) {
+        console.log('Wrong network detected, switching...');
+        try {
+          await switchToLocalNetwork();
+          // Wait a moment for network switch
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (err) {
+          console.warn('Network switch failed:', err);
+          setError('Please switch to Hardhat Local network in MetaMask manually');
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Check registration status
+      console.log('Checking registration status...');
+
+      let isPatient = false;
+      try {
+        isPatient = await blockchainAPI.isPatient(address);
+      } catch (err) {
+        console.log('Not a patient');
+      }
 
       if (isPatient) {
+        console.log('✅ Registered as patient');
         setSelectedRole('patient');
         setStep('auth');
         await handleAuthenticate(address, 'patient');
         return;
       }
 
-      // Check if doctor
-      const isDoctor = await blockchainAPI.isVerifiedDoctor(address);
+      let isDoctor = false;
+      try {
+        isDoctor = await blockchainAPI.isVerifiedDoctor(address);
+      } catch (err) {
+        console.log('Not a verified doctor');
+      }
 
       if (isDoctor) {
+        console.log('✅ Registered as doctor');
         setSelectedRole('doctor');
         setStep('auth');
         await handleAuthenticate(address, 'doctor');
         return;
       }
 
-      // Check if doctor pending verification
+      // Check if doctor pending
       try {
         const doctorInfo = await blockchainAPI.getDoctorInfo(address);
-        if (doctorInfo.status === 0) { // Pending
+        if (doctorInfo.status === 0) {
           setError('Your doctor account is pending verification. Please wait for admin approval.');
+          setLoading(false);
           return;
-        } else if (doctorInfo.status === 2) { // Rejected
+        } else if (doctorInfo.status === 2) {
           setError('Your doctor account was rejected. Please contact support.');
+          setLoading(false);
           return;
-        } else if (doctorInfo.status === 3) { // Suspended
+        } else if (doctorInfo.status === 3) {
           setError('Your doctor account is suspended. Please contact support.');
+          setLoading(false);
           return;
         }
       } catch (err) {
-        // Not a doctor, continue to registration
+        console.log('Not a registered doctor');
       }
 
       // New user
+      console.log('New user - showing registration');
       setStep('register');
+      setLoading(false);
+
     } catch (err: any) {
-      setError(err.message || 'Failed to connect wallet');
-    } finally {
+      console.error('=== CONNECTION ERROR ===');
+      console.error(err);
+
+      let errorMessage = err.message || 'Failed to connect wallet';
+
+      // Make multi-line errors readable
+      if (errorMessage.includes('\n')) {
+        errorMessage = errorMessage.split('\n').map((line: string) => line.trim()).join('\n');
+      }
+
+      setError(errorMessage);
       setLoading(false);
     }
   };
@@ -83,59 +185,108 @@ export default function LoginPage() {
     try {
       setLoading(true);
       setError('');
+      console.log('Starting registration as:', selectedRole);
 
-      // Generate RSA key pair for encryption
-      const keyPair = await generateUserKeyPair();
-      const publicKey = await exportPublicKey(keyPair.publicKey);
-      const privateKey = await exportPrivateKey(keyPair.privateKey);
+      // Step 1: Generate RSA key pair (with error handling)
+      console.log('Generating encryption keys...');
+      let keyPair, publicKey, privateKey;
+      try {
+        keyPair = await generateUserKeyPair();
+        publicKey = await exportPublicKey(keyPair.publicKey);
+        privateKey = await exportPrivateKey(keyPair.privateKey);
+      } catch (err) {
+        console.error('Key generation failed:', err);
+        throw new Error('Failed to generate encryption keys. Please try again.');
+      }
 
-      // Store keys in localStorage (in production, use secure key management)
-      localStorage.setItem(`publicKey_${walletAddress}`, publicKey);
-      localStorage.setItem(`privateKey_${walletAddress}`, privateKey);
+      // Step 2: Store keys in localStorage
+      console.log('Storing keys...');
+      try {
+        localStorage.setItem(`publicKey_${walletAddress}`, publicKey);
+        localStorage.setItem(`privateKey_${walletAddress}`, privateKey);
+      } catch (err) {
+        console.error('LocalStorage error:', err);
+        throw new Error('Failed to store encryption keys. Please check browser storage permissions.');
+      }
 
-      // Create profile metadata
+      // Step 3: Create profile metadata
       const profileMetadata = {
         publicKey,
         createdAt: new Date().toISOString(),
         role: selectedRole,
       };
 
-      // Upload profile to IPFS
-      const token = storage.getToken();
-      const response = await fetch('/api/ipfs/upload-json', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
-        },
-        body: JSON.stringify({
-          json: profileMetadata,
-          metadata: {
-            name: `${selectedRole}-profile-${walletAddress.slice(0, 10)}`,
+      // Step 4: Upload profile to IPFS (with proper token handling)
+      console.log('Uploading profile to IPFS...');
+      let profileCID;
+      try {
+        // Generate temporary token or use empty auth
+        const tempToken = storage.getToken() || '';
+
+        const response = await fetch('/api/ipfs/upload-json', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(tempToken ? { Authorization: `Bearer ${tempToken}` } : {}),
           },
-        }),
-      });
+          body: JSON.stringify({
+            json: profileMetadata,
+            metadata: {
+              name: `${selectedRole}-profile-${walletAddress.slice(0, 10)}`,
+            },
+          }),
+        });
 
-      const { cid: profileCID } = await response.json();
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: 'IPFS upload failed' }));
+          throw new Error(errorData.error || 'Failed to upload profile to IPFS');
+        }
 
-      if (selectedRole === 'patient') {
-        await blockchainAPI.registerPatient(profileCID);
-      } else {
-        if (!licenseNumber.trim()) {
-          setError('Medical license number is required for doctors');
+        const data = await response.json();
+        profileCID = data.cid;
+        console.log('Profile uploaded to IPFS:', profileCID);
+      } catch (err: any) {
+        console.error('IPFS upload error:', err);
+        throw new Error('Failed to upload profile: ' + (err.message || 'Unknown error'));
+      }
+
+      // Step 5: Register on blockchain
+      console.log('Registering on blockchain...');
+      try {
+        if (selectedRole === 'patient') {
+          await blockchainAPI.registerPatient(profileCID);
+          console.log('Patient registered successfully');
+        } else {
+          if (!licenseNumber.trim()) {
+            throw new Error('Medical license number is required for doctors');
+          }
+          await blockchainAPI.registerDoctor(profileCID, licenseNumber);
+          console.log('Doctor registered successfully');
+
+          setError('Doctor registration submitted! Your account is pending verification by an administrator. You will be able to login once approved.');
+          setStep('connect');
           setLoading(false);
           return;
         }
-        await blockchainAPI.registerDoctor(profileCID, licenseNumber);
+      } catch (err: any) {
+        console.error('Blockchain registration error:', err);
 
-        setError('Doctor registration submitted! Your account is pending verification by an administrator. You will be able to login once approved.');
-        setStep('connect');
-        setLoading(false);
-        return;
+        // Handle "already registered" error gracefully
+        if (err.message?.includes('already registered')) {
+          console.log('User already registered, proceeding to authentication');
+          await handleAuthenticate(walletAddress, selectedRole);
+          return;
+        }
+
+        throw new Error('Blockchain registration failed: ' + (err.message || 'Unknown error'));
       }
 
+      // Step 6: Authenticate
+      console.log('Proceeding to authentication...');
       await handleAuthenticate(walletAddress, selectedRole);
+
     } catch (err: any) {
+      console.error('Registration error:', err);
       setError(err.message || 'Registration failed');
       setLoading(false);
     }
@@ -143,18 +294,33 @@ export default function LoginPage() {
 
   const handleAuthenticate = async (address: string, role: 'patient' | 'doctor') => {
     try {
+      setLoading(true);
+      console.log('Starting authentication for:', address, 'as', role);
+
+      // Step 1: Request nonce
+      console.log('Requesting nonce...');
       const nonceRes = await fetch('/api/auth/nonce', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ address }),
       });
 
-      if (!nonceRes.ok) throw new Error('Failed to get nonce');
-      const { nonce } = await nonceRes.json();
+      if (!nonceRes.ok) {
+        const errorData = await nonceRes.json().catch(() => ({ error: 'Failed to get nonce' }));
+        throw new Error(errorData.error || 'Failed to get nonce');
+      }
 
+      const { nonce } = await nonceRes.json();
+      console.log('Nonce received:', nonce);
+
+      // Step 2: Sign message
+      console.log('Requesting signature...');
       const message = `Sign this message to authenticate with AI Decentralized HRS.\n\nNonce: ${nonce}\nRole: ${role}`;
       const signature = await signMessage(message);
+      console.log('Message signed');
 
+      // Step 3: Verify signature
+      console.log('Verifying signature...');
       const verifyRes = await fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -162,18 +328,24 @@ export default function LoginPage() {
       });
 
       if (!verifyRes.ok) {
-        const errorData = await verifyRes.json();
+        const errorData = await verifyRes.json().catch(() => ({ error: 'Verification failed' }));
         throw new Error(errorData.error || 'Verification failed');
       }
 
       const { token } = await verifyRes.json();
+      console.log('Authentication successful');
 
+      // Step 4: Store credentials
       storage.setToken(token);
       storage.setAddress(address);
       storage.setRole(role);
 
+      // Step 5: Redirect to dashboard
+      console.log('Redirecting to dashboard...');
       router.push('/dashboard');
+
     } catch (err: any) {
+      console.error('Authentication error:', err);
       setError(err.message || 'Authentication failed');
       setLoading(false);
     }
@@ -221,29 +393,30 @@ export default function LoginPage() {
             <div className="space-y-4">
               <button
                 onClick={handleWalletConnect}
-                disabled={loading}
+                disabled={loading || walletCheck !== 'ready'}
                 className="w-full group relative overflow-hidden bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-4 px-6 rounded-xl font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <div className="absolute inset-0 bg-white/20 transform -skew-x-12 -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
-                <div className="relative flex items-center justify-center space-x-3">
-                  {loading ? (
-                    <>
-                      <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      <span>Connecting...</span>
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z" />
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clipRule="evenodd" />
-                      </svg>
-                      <span>Connect MetaMask Wallet</span>
-                    </>
-                  )}
-                </div>
+                {walletCheck === 'checking' ? (
+                  'Checking MetaMask...'
+                ) : walletCheck === 'error' ? (
+                  'MetaMask Not Available'
+                ) : loading ? (
+                  <>
+                    <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span>Connecting...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-6 h-6 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z" />
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clipRule="evenodd" />
+                    </svg>
+                    Connect MetaMask Wallet
+                  </>
+                )}
               </button>
 
               {/* Info Cards */}
@@ -419,7 +592,7 @@ export default function LoginPage() {
             </p>
           </div>
         </div>
-      </div>
+      </div >
 
       <style jsx>{`
     @keyframes blob {
@@ -452,6 +625,6 @@ export default function LoginPage() {
       background-size: 20px 20px;
     }
   `}</style>
-    </div>
+    </div >
   );
 }
